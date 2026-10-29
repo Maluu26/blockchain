@@ -1,43 +1,190 @@
 <!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#000000" />
-    <meta
-      name="description"
-      content="Hardhat React Dapp"
-    />
-    <link rel="apple-touch-icon" href="%PUBLIC_URL%/logo192.png" />
-    <!--
-      manifest.json provides metadata used when your web app is installed on a
-      user's mobile device or desktop. See https://developers.google.com/web/fundamentals/web-app-manifest/
-    -->
-    <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
-    <!--
-      Notice the use of %PUBLIC_URL% in the tags above.
-      It will be replaced with the URL of the `public` folder during the build.
-      Only files inside the `public` folder can be referenced from the HTML.
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>dApp Turing</title>
+    <script src="https://cdn.ethers.io/lib/ethers-5.2.umd.min.js"></script>
+    <style>
+        body { font-family: sans-serif; max-width: 500px; margin: 30px auto; padding: 20px; line-height: 1.5; }
+        .box { border: 1px solid #ccc; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+        .admin { border-color: #d9534f; background-color: #fff8f8; display: none; }
+        label { display: block; margin-top: 10px; font-weight: bold; }
+        select, input, button { width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box; }
+        button { background: #007bff; color: white; border: none; cursor: pointer; border-radius: 4px; font-weight: bold; }
+        button:hover { background: #0056b3; }
+        .btn-red { background: #dc3545; }
+        .btn-green { background: #28a745; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+    </style>
+</head>
+<body>
 
-      Unlike "/favicon.ico" or "favicon.ico", "%PUBLIC_URL%/favicon.ico" will
-      work correctly both with client-side routing and a non-root public URL.
-      Learn how to configure a non-root public URL by running `npm run build`.
-    -->
-    <title>Hardhat + React App = Dapp</title>
-  </head>
-  <body>
-    <noscript>You need to enable JavaScript to run this app.</noscript>
-    <div id="root"></div>
-    <!--
-      This HTML file is a template.
-      If you open it directly in the browser, you will see an empty page.
+    <h2>dApp Turing</h2>
 
-      You can add webfonts, meta tags, or analytics to this file.
-      The build step will place the bundled scripts into the <body> tag.
+    <!-- Conexão -->
+    <div class="box">
+        <button id="btnConnect" onclick="connectWallet()">Conectar Carteira</button>
+        <p><strong>Usuário:</strong> <span id="userDisplay">-</span> | <strong>Perfil:</strong> <span id="roleDisplay">-</span></p>
+        <p><strong>Votação:</strong> <span id="statusDisplay">-</span> | <strong>Seu Saldo:</strong> <span id="balanceDisplay">0</span> TUR</p>
+    </div>
 
-      To begin the development, run `npm start` or `yarn start`.
-      To create a production bundle, use `npm run build` or `yarn build`.
-    -->
-  </body>
+    <!-- Votação (Para todos) -->
+    <div class="box">
+        <h3>Votar</h3>
+        <label>Aluno:</label>
+        <select id="voteCandidate"></select>
+
+        <label>Turings (1 ou 2):</label>
+        <input type="number" id="voteAmount" min="1" max="2" value="1">
+
+        <button onclick="handleVote()">Enviar Voto</button>
+    </div>
+
+    <!-- Painel do Admin (Apenas Superusuário/Professora) -->
+    <div id="adminPanel" class="box admin">
+        <h3>⚡ Painel Admin</h3>
+        
+        <label>Emitir para Aluno:</label>
+        <select id="issueTarget"></select>
+
+        <label>Quantidade:</label>
+        <input type="number" id="issueAmount" min="1" value="5">
+
+        <button onclick="handleIssue()" style="margin-bottom: 10px;">Emitir Tokens</button>
+
+        <div style="display: flex; gap: 10px;">
+            <button onclick="handleSetVoting(true)" class="btn-green">Ativar Votação</button>
+            <button onclick="handleSetVoting(false)" class="btn-red">Pausar Votação</button>
+        </div>
+    </div>
+
+    <!-- Ranking -->
+    <div class="box">
+        <h3>Ranking</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Codinome</th>
+                    <th>Saldo (TUR)</th>
+                </tr>
+            </thead>
+            <tbody id="rankingTable">
+                <tr><td colspan="2">Conecte a carteira...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+<script>
+    const CONTRACT_ADDRESS = "SEU_ENDERECO_DO_CONTRATO_AQUI";
+
+    const CONTRACT_ABI = [
+        "function voting() view returns (bool)",
+        "function owner() view returns (address)",
+        "function balanceOf(address) view returns (uint256)",
+        "function vote(string codinomeCandidato, uint256 qtde_de_Turings)",
+        "function issueToken(string codinome, uint256 qtde_de_Turings)",
+        "function votingOn()",
+        "function votingOff()"
+    ];
+
+    const USERS = [
+        { codinome: "roberta", address: "0x502542668aF09fa7aea52174b9965A7799343Df7", isTeacher: true },
+        { codinome: "nome1",   address: "0x70997970c51812dc3a010c7d01b50e0d17dc79c8", isTeacher: false },
+        { codinome: "nome2",   address: "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc", isTeacher: false },
+        { codinome: "nome3",   address: "0x90f79bf6eb2c4f870365e785982e1f101e93b906", isTeacher: false },
+        { codinome: "nome4",   address: "0x15d34aaf54267db7d7c367839aaf71a00a2c6a65", isTeacher: false },
+        { codinome: "nome5",   address: "0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc", isTeacher: false }
+    ];
+
+    let provider, signer, contract, currentAccount = "";
+
+    window.onload = () => {
+        // Popula selects sem a professora
+        const students = USERS.filter(u => !u.isTeacher);
+        const optionsHtml = students.map(s => `<option value="${s.codinome}">${s.codinome}</option>`).join("");
+        document.getElementById("voteCandidate").innerHTML = optionsHtml;
+        document.getElementById("issueTarget").innerHTML = optionsHtml;
+    };
+
+    async function connectWallet() {
+        if (!window.ethereum) return alert("Instale o MetaMask!");
+        provider = new ethers.providers.Web3Provider(window.ethereum);
+        const accounts = await provider.send("eth_requestAccounts", []);
+        currentAccount = accounts[0];
+        
+        signer = provider.getSigner();
+        contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
+
+        await updateUI();
+    }
+
+    async function updateUI() {
+        // Identifica perfil
+        const user = USERS.find(u => u.address.toLowerCase() === currentAccount.toLowerCase());
+        const owner = await contract.owner();
+        const isAdmin = (user && user.isTeacher) || currentAccount.toLowerCase() === owner.toLowerCase();
+
+        document.getElementById("userDisplay").innerText = user ? user.codinome : "Desconhecido";
+        document.getElementById("roleDisplay").innerText = isAdmin ? "Superusuário" : "Comum";
+        document.getElementById("adminPanel").style.display = isAdmin ? "block" : "none";
+
+        // Saldo e Status
+        const balance = await contract.balanceOf(currentAccount);
+        document.getElementById("balanceDisplay").innerText = balance.toString();
+
+        const isVotingActive = await contract.voting();
+        document.getElementById("statusDisplay").innerText = isVotingActive ? "Ativa 🟢" : "Pausada 🔴";
+
+        // Ranking via polling
+        await updateRanking();
+    }
+
+    async function handleVote() {
+        try {
+            const cand = document.getElementById("voteCandidate").value;
+            const amount = document.getElementById("voteAmount").value;
+            const tx = await contract.vote(cand, amount);
+            await tx.wait();
+            alert("Voto registrado!");
+            await updateUI();
+        } catch (err) { alert("Erro: " + (err.reason || err.message)); }
+    }
+
+    async function handleIssue() {
+        try {
+            const target = document.getElementById("issueTarget").value;
+            const amount = document.getElementById("issueAmount").value;
+            const tx = await contract.issueToken(target, amount);
+            await tx.wait();
+            alert("Tokens emitidos!");
+            await updateUI();
+        } catch (err) { alert("Erro: " + (err.reason || err.message)); }
+    }
+
+    async function handleSetVoting(enable) {
+        try {
+            const tx = enable ? await contract.votingOn() : await contract.votingOff();
+            await tx.wait();
+            await updateUI();
+        } catch (err) { alert("Erro: " + (err.reason || err.message)); }
+    }
+
+    async function updateRanking() {
+        const list = [];
+        for (const u of USERS) {
+            const bal = await contract.balanceOf(u.address);
+            list.push({ codinome: u.codinome, balance: BigInt(bal.toString()) });
+        }
+        list.sort((a, b) => (b.balance > a.balance ? 1 : -1));
+
+        document.getElementById("rankingTable").innerHTML = list.map(item => `
+            <tr>
+                <td>${item.codinome}</td>
+                <td><strong>${item.balance.toString()} TUR</strong></td>
+            </tr>
+        `).join("");
+    }
+</script>
+</body>
 </html>
