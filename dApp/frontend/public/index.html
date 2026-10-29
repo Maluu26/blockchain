@@ -2,8 +2,9 @@
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>dApp Turing</title>
-    <script src="https://cdn.ethers.io/lib/ethers-5.2.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js"></script>
     <style>
         body { font-family: sans-serif; max-width: 500px; margin: 30px auto; padding: 20px; line-height: 1.5; }
         .box { border: 1px solid #ccc; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
@@ -12,10 +13,15 @@
         select, input, button { width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box; }
         button { background: #007bff; color: white; border: none; cursor: pointer; border-radius: 4px; font-weight: bold; }
         button:hover { background: #0056b3; }
+        button:disabled { background: #999; cursor: not-allowed; }
         .btn-red { background: #dc3545; }
+        .btn-red:hover { background: #a71d2a; }
         .btn-green { background: #28a745; }
+        .btn-green:hover { background: #1e7e34; }
         table { width: 100%; border-collapse: collapse; margin-top: 10px; }
         th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        #msg { min-height: 1.5em; font-size: 0.9em; }
+        .ok { color: #28a745; } .err { color: #dc3545; } .info { color: #555; }
     </style>
 </head>
 <body>
@@ -27,28 +33,29 @@
         <button id="btnConnect" onclick="connectWallet()">Conectar Carteira</button>
         <p><strong>Usuário:</strong> <span id="userDisplay">-</span> | <strong>Perfil:</strong> <span id="roleDisplay">-</span></p>
         <p><strong>Votação:</strong> <span id="statusDisplay">-</span> | <strong>Seu Saldo:</strong> <span id="balanceDisplay">0</span> TUR</p>
+        <div id="msg" class="info"></div>
     </div>
 
     <!-- Votação (Para todos) -->
     <div class="box">
         <h3>Votar</h3>
-        <label>Aluno:</label>
+        <label for="voteCandidate">Aluno:</label>
         <select id="voteCandidate"></select>
 
-        <label>Turings (1 ou 2):</label>
+        <label for="voteAmount">Turings (1 ou 2):</label>
         <input type="number" id="voteAmount" min="1" max="2" value="1">
 
-        <button onclick="handleVote()">Enviar Voto</button>
+        <button id="btnVote" onclick="handleVote()" disabled>Enviar Voto</button>
     </div>
 
     <!-- Painel do Admin (Apenas Superusuário/Professora) -->
     <div id="adminPanel" class="box admin">
         <h3>⚡ Painel Admin</h3>
-        
-        <label>Emitir para Aluno:</label>
+
+        <label for="issueTarget">Emitir para Aluno:</label>
         <select id="issueTarget"></select>
 
-        <label>Quantidade:</label>
+        <label for="issueAmount">Quantidade:</label>
         <input type="number" id="issueAmount" min="1" value="5">
 
         <button onclick="handleIssue()" style="margin-bottom: 10px;">Emitir Tokens</button>
@@ -76,7 +83,17 @@
     </div>
 
 <script>
-    const CONTRACT_ADDRESS = "SEU_ENDERECO_DO_CONTRATO_AQUI";
+    // CORREÇÃO: o endereço precisa ser uma string
+    const CONTRACT_ADDRESS = "0x5fbdb2315678afecb367f032d93f642f64180aa3";
+
+    // Rede Hardhat local
+    const HARDHAT_CHAIN_ID = "0x7a69"; // 31337
+    const HARDHAT_NETWORK = {
+        chainId: HARDHAT_CHAIN_ID,
+        chainName: "Hardhat Local",
+        rpcUrls: ["http://127.0.0.1:8545"],
+        nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 }
+    };
 
     const CONTRACT_ABI = [
         "function voting() view returns (bool)",
@@ -85,11 +102,13 @@
         "function vote(string codinomeCandidato, uint256 qtde_de_Turings)",
         "function issueToken(string codinome, uint256 qtde_de_Turings)",
         "function votingOn()",
-        "function votingOff()"
+        "function votingOff()",
+        "event Transfer(address indexed _from, address indexed _to, uint256 _value)"
     ];
 
+    // Endereços em minúsculas (evita erro de checksum do ethers)
     const USERS = [
-        { codinome: "roberta", address: "0x502542668aF09fa7aea52174b9965A7799343Df7", isTeacher: true },
+        { codinome: "roberta", address: "0x502542668af09fa7aea52174b9965a7799343df7", isTeacher: true },
         { codinome: "nome1",   address: "0x70997970c51812dc3a010c7d01b50e0d17dc79c8", isTeacher: false },
         { codinome: "nome2",   address: "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc", isTeacher: false },
         { codinome: "nome3",   address: "0x90f79bf6eb2c4f870365e785982e1f101e93b906", isTeacher: false },
@@ -98,85 +117,141 @@
     ];
 
     let provider, signer, contract, currentAccount = "";
+    let listenersAttached = false;
+
+    function setMsg(text, cls = "info") {
+        const el = document.getElementById("msg");
+        el.textContent = text;
+        el.className = cls;
+    }
+
+    function errText(err) {
+        return (err && (err.reason || (err.error && err.error.message) || (err.data && err.data.message) || err.message)) || String(err);
+    }
 
     window.onload = () => {
-        // Popula selects sem a professora
         const students = USERS.filter(u => !u.isTeacher);
         const optionsHtml = students.map(s => `<option value="${s.codinome}">${s.codinome}</option>`).join("");
         document.getElementById("voteCandidate").innerHTML = optionsHtml;
         document.getElementById("issueTarget").innerHTML = optionsHtml;
     };
 
+    async function ensureHardhatNetwork() {
+        const chainId = await window.ethereum.request({ method: "eth_chainId" });
+        if (chainId === HARDHAT_CHAIN_ID) return;
+        try {
+            await window.ethereum.request({
+                method: "wallet_switchEthereumChain",
+                params: [{ chainId: HARDHAT_CHAIN_ID }]
+            });
+        } catch (e) {
+            if (e.code === 4902 || (e.data && e.data.originalError && e.data.originalError.code === 4902)) {
+                await window.ethereum.request({
+                    method: "wallet_addEthereumChain",
+                    params: [HARDHAT_NETWORK]
+                });
+            } else {
+                throw e;
+            }
+        }
+    }
+
     async function connectWallet() {
         if (!window.ethereum) return alert("Instale o MetaMask!");
-        provider = new ethers.providers.Web3Provider(window.ethereum);
-        const accounts = await provider.send("eth_requestAccounts", []);
-        currentAccount = accounts[0];
-        
-        signer = provider.getSigner();
-        contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
+        try {
+            setMsg("Conectando...");
+            await ensureHardhatNetwork();
 
-        await updateUI();
+            provider = new ethers.providers.Web3Provider(window.ethereum, "any");
+            const accounts = await provider.send("eth_requestAccounts", []);
+            currentAccount = accounts[0];
+
+            signer = provider.getSigner();
+            contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
+
+            // Verifica se há contrato no endereço (ex.: node do Hardhat reiniciado)
+            const code = await provider.getCode(CONTRACT_ADDRESS);
+            if (code === "0x") {
+                setMsg("Nenhum contrato encontrado nesse endereço. Faça o deploy novamente.", "err");
+                return;
+            }
+
+            if (!listenersAttached) {
+                listenersAttached = true;
+                window.ethereum.on("accountsChanged", () => window.location.reload());
+                window.ethereum.on("chainChanged", () => window.location.reload());
+            }
+            contract.removeAllListeners("Transfer");
+            contract.on("Transfer", () => { updateUI().catch(console.error); });
+
+            document.getElementById("btnConnect").innerText = "Carteira conectada";
+            await updateUI();
+            setMsg("Conectado.", "ok");
+        } catch (err) {
+            setMsg("Erro ao conectar: " + errText(err), "err");
+        }
     }
 
     async function updateUI() {
-        // Identifica perfil
+        if (!contract) return;
+
         const user = USERS.find(u => u.address.toLowerCase() === currentAccount.toLowerCase());
         const owner = await contract.owner();
-        const isAdmin = (user && user.isTeacher) || currentAccount.toLowerCase() === owner.toLowerCase();
+        const isOwner = currentAccount.toLowerCase() === owner.toLowerCase();
+        const isAdmin = (user && user.isTeacher) || isOwner;
 
-        document.getElementById("userDisplay").innerText = user ? user.codinome : "Desconhecido";
+        document.getElementById("userDisplay").innerText = user ? user.codinome : (isOwner ? "owner" : "Desconhecido");
         document.getElementById("roleDisplay").innerText = isAdmin ? "Superusuário" : "Comum";
         document.getElementById("adminPanel").style.display = isAdmin ? "block" : "none";
 
-        // Saldo e Status
         const balance = await contract.balanceOf(currentAccount);
         document.getElementById("balanceDisplay").innerText = balance.toString();
 
         const isVotingActive = await contract.voting();
         document.getElementById("statusDisplay").innerText = isVotingActive ? "Ativa 🟢" : "Pausada 🔴";
 
-        // Ranking via polling
+        // Só usuários pré-autorizados podem votar (regra do contrato)
+        document.getElementById("btnVote").disabled = !(user && isVotingActive);
+
         await updateRanking();
     }
 
-    async function handleVote() {
+    async function sendTx(label, fn) {
         try {
-            const cand = document.getElementById("voteCandidate").value;
-            const amount = document.getElementById("voteAmount").value;
-            const tx = await contract.vote(cand, amount);
+            setMsg(label + " — confirme na carteira...");
+            const tx = await fn();
+            setMsg("Aguardando confirmação da transação...");
             await tx.wait();
-            alert("Voto registrado!");
+            setMsg(label + ": sucesso!", "ok");
             await updateUI();
-        } catch (err) { alert("Erro: " + (err.reason || err.message)); }
+        } catch (err) {
+            setMsg("Erro: " + errText(err), "err");
+        }
+    }
+
+    async function handleVote() {
+        const cand = document.getElementById("voteCandidate").value;
+        const amount = parseInt(document.getElementById("voteAmount").value, 10);
+        if (!(amount === 1 || amount === 2)) return setMsg("Escolha 1 ou 2 Turings.", "err");
+        await sendTx("Voto", () => contract.vote(cand, amount));
     }
 
     async function handleIssue() {
-        try {
-            const target = document.getElementById("issueTarget").value;
-            const amount = document.getElementById("issueAmount").value;
-            const tx = await contract.issueToken(target, amount);
-            await tx.wait();
-            alert("Tokens emitidos!");
-            await updateUI();
-        } catch (err) { alert("Erro: " + (err.reason || err.message)); }
+        const target = document.getElementById("issueTarget").value;
+        const amount = parseInt(document.getElementById("issueAmount").value, 10);
+        if (!(amount > 0)) return setMsg("Quantidade deve ser maior que zero.", "err");
+        await sendTx("Emissão", () => contract.issueToken(target, amount));
     }
 
     async function handleSetVoting(enable) {
-        try {
-            const tx = enable ? await contract.votingOn() : await contract.votingOff();
-            await tx.wait();
-            await updateUI();
-        } catch (err) { alert("Erro: " + (err.reason || err.message)); }
+        await sendTx(enable ? "Ativar votação" : "Pausar votação",
+            () => enable ? contract.votingOn() : contract.votingOff());
     }
 
     async function updateRanking() {
-        const list = [];
-        for (const u of USERS) {
-            const bal = await contract.balanceOf(u.address);
-            list.push({ codinome: u.codinome, balance: BigInt(bal.toString()) });
-        }
-        list.sort((a, b) => (b.balance > a.balance ? 1 : -1));
+        const balances = await Promise.all(USERS.map(u => contract.balanceOf(u.address)));
+        const list = USERS.map((u, i) => ({ codinome: u.codinome, balance: balances[i] }));
+        list.sort((a, b) => b.balance.gt(a.balance) ? 1 : (b.balance.lt(a.balance) ? -1 : 0));
 
         document.getElementById("rankingTable").innerHTML = list.map(item => `
             <tr>
