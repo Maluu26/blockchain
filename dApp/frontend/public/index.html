@@ -6,57 +6,68 @@
     <title>dApp Turing</title>
     <script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js"></script>
     <style>
-        body { font-family: sans-serif; max-width: 500px; margin: 30px auto; padding: 20px; line-height: 1.5; }
+        body { font-family: sans-serif; max-width: 520px; margin: 30px auto; padding: 20px; line-height: 1.5; }
         .box { border: 1px solid #ccc; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
-        .admin { border-color: #d9534f; background-color: #fff8f8; display: none; }
+        .admin { border-color: #d9534f; background-color: #fff8f8; }
+        .hidden { display: none; }
         label { display: block; margin-top: 10px; font-weight: bold; }
         select, input, button { width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box; }
         button { background: #007bff; color: white; border: none; cursor: pointer; border-radius: 4px; font-weight: bold; }
-        button:hover { background: #0056b3; }
+        button:hover:not(:disabled) { background: #0056b3; }
         button:disabled { background: #999; cursor: not-allowed; }
         .btn-red { background: #dc3545; }
-        .btn-red:hover { background: #a71d2a; }
+        .btn-red:hover:not(:disabled) { background: #a71d2a; }
         .btn-green { background: #28a745; }
-        .btn-green:hover { background: #1e7e34; }
+        .btn-green:hover:not(:disabled) { background: #1e7e34; }
         table { width: 100%; border-collapse: collapse; margin-top: 10px; }
         th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-        #msg { min-height: 1.5em; font-size: 0.9em; }
+        #msg { min-height: 1.5em; font-size: 0.9em; margin-top: 8px; }
         .ok { color: #28a745; } .err { color: #dc3545; } .info { color: #555; }
+        .note { font-size: 0.85em; color: #666; margin-top: 8px; }
+        .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.85em; color: #fff; }
+        .b-admin { background: #d9534f; } .b-user { background: #28a745; } .b-none { background: #777; }
     </style>
 </head>
 <body>
 
     <h2>dApp Turing</h2>
 
-    <!-- Conexão -->
+    <!-- Conexão / status -->
     <div class="box">
         <button id="btnConnect" onclick="connectWallet()">Conectar Carteira</button>
-        <p><strong>Usuário:</strong> <span id="userDisplay">-</span> | <strong>Perfil:</strong> <span id="roleDisplay">-</span></p>
-        <p><strong>Votação:</strong> <span id="statusDisplay">-</span> | <strong>Seu Saldo:</strong> <span id="balanceDisplay">0</span> TUR</p>
+        <p><strong>Usuário:</strong> <span id="userDisplay">-</span>
+           | <strong>Perfil:</strong> <span id="roleDisplay"><span class="badge b-none">-</span></span></p>
+        <p><strong>Votação:</strong> <span id="statusDisplay">-</span>
+           | <strong>Seu saldo:</strong> <span id="balanceDisplay">0</span> TUR</p>
         <div id="msg" class="info"></div>
+        <div id="debug" class="note"></div>
     </div>
 
-    <!-- Votação (Para todos) -->
-    <div class="box">
+    <!-- Votar (usuários registrados e superusuários) -->
+    <div class="box" id="voteBox">
         <h3>Votar</h3>
         <label for="voteCandidate">Aluno:</label>
         <select id="voteCandidate"></select>
 
-        <label for="voteAmount">Turings (1 ou 2):</label>
-        <input type="number" id="voteAmount" min="1" max="2" value="1">
+        <label for="voteAmount">Quantidade de Turings:</label>
+        <select id="voteAmount">
+            <option value="1">1</option>
+            <option value="2">2</option>
+        </select>
 
         <button id="btnVote" onclick="handleVote()" disabled>Enviar Voto</button>
+        <div id="voteNote" class="note"></div>
     </div>
 
-    <!-- Painel do Admin (Apenas Superusuário/Professora) -->
-    <div id="adminPanel" class="box admin">
-        <h3>⚡ Painel Admin</h3>
+    <!-- Painel do Superusuário: issueToken, votingOn, votingOff -->
+    <div id="adminPanel" class="box admin hidden">
+        <h3>⚡ Painel do Superusuário</h3>
 
-        <label for="issueTarget">Emitir para Aluno:</label>
+        <label for="issueTarget">Emitir para aluno:</label>
         <select id="issueTarget"></select>
 
-        <label for="issueAmount">Quantidade:</label>
-        <input type="number" id="issueAmount" min="1" value="5">
+        <label for="issueAmount">Quantidade de Turings:</label>
+        <input type="number" id="issueAmount" min="1" step="1" value="5">
 
         <button onclick="handleIssue()" style="margin-bottom: 10px;">Emitir Tokens</button>
 
@@ -71,22 +82,18 @@
         <h3>Ranking</h3>
         <table>
             <thead>
-                <tr>
-                    <th>Codinome</th>
-                    <th>Saldo (TUR)</th>
-                </tr>
+                <tr><th>#</th><th>Codinome</th><th>Saldo (TUR)</th></tr>
             </thead>
             <tbody id="rankingTable">
-                <tr><td colspan="2">Conecte a carteira...</td></tr>
+                <tr><td colspan="3">Conecte a carteira...</td></tr>
             </tbody>
         </table>
+        <div class="note">Atualizado automaticamente pelos eventos <code>Transfer</code> do contrato.</div>
     </div>
 
 <script>
-    // CORREÇÃO: o endereço precisa ser uma string
-    const CONTRACT_ADDRESS = "0x5fbdb2315678afecb367f032d93f642f64180aa3";
+    const CONTRACT_ADDRESS = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
 
-    // Rede Hardhat local
     const HARDHAT_CHAIN_ID = "0x7a69"; // 31337
     const HARDHAT_NETWORK = {
         chainId: HARDHAT_CHAIN_ID,
@@ -99,6 +106,8 @@
         "function voting() view returns (bool)",
         "function owner() view returns (address)",
         "function balanceOf(address) view returns (uint256)",
+        "function users(string) view returns (address)",
+        "function hasVote(string, string) view returns (bool)",
         "function vote(string codinomeCandidato, uint256 qtde_de_Turings)",
         "function issueToken(string codinome, uint256 qtde_de_Turings)",
         "function votingOn()",
@@ -106,58 +115,44 @@
         "event Transfer(address indexed _from, address indexed _to, uint256 _value)"
     ];
 
-    // Endereços em minúsculas (evita erro de checksum do ethers)
-    const USERS = [
-        { codinome: "roberta", address: "0x502542668af09fa7aea52174b9965a7799343df7", isTeacher: true },
-        { codinome: "nome1",   address: "0x70997970c51812dc3a010c7d01b50e0d17dc79c8", isTeacher: false },
-        { codinome: "nome2",   address: "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc", isTeacher: false },
-        { codinome: "nome3",   address: "0x90f79bf6eb2c4f870365e785982e1f101e93b906", isTeacher: false },
-        { codinome: "nome4",   address: "0x15d34aaf54267db7d7c367839aaf71a00a2c6a65", isTeacher: false },
-        { codinome: "nome5",   address: "0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc", isTeacher: false }
-    ];
+    // Codinomes pré-cadastrados no construtor do contrato.
+    // Os ENDEREÇOS são lidos direto do contrato (mapping users), não ficam fixos aqui.
+    const TEACHER = "roberta";
+    const CODINOMES = ["roberta", "nome1", "nome2", "nome3", "nome4", "nome5"];
 
-    let provider, signer, contract, currentAccount = "";
+    let provider, contract, currentAccount = "";
+    let USERS = [];          // { codinome, address, isTeacher }
     let listenersAttached = false;
+    let refreshing = false, refreshAgain = false;
 
-    function setMsg(text, cls = "info") {
-        const el = document.getElementById("msg");
-        el.textContent = text;
-        el.className = cls;
-    }
+    const $ = id => document.getElementById(id);
+    const same = (a, b) => a && b && a.toLowerCase() === b.toLowerCase();
+    const students = () => USERS.filter(u => !u.isTeacher);
+
+    function setMsg(text, cls = "info") { $("msg").textContent = text; $("msg").className = cls; }
 
     function errText(err) {
-        return (err && (err.reason || (err.error && err.error.message) || (err.data && err.data.message) || err.message)) || String(err);
+        if (err && (err.code === 4001 || err.code === "ACTION_REJECTED")) return "Transação cancelada na carteira.";
+        const raw = (err && ((err.error && err.error.data && err.error.data.message) || (err.data && err.data.message) ||
+                    (err.error && err.error.message) || err.reason || err.message)) || String(err);
+        const m = raw.match(/reverted with reason string '([^']+)'/) || raw.match(/execution reverted: ([^"'}]+)/);
+        return m ? m[1].trim() : raw;
     }
-
-    window.onload = () => {
-        const students = USERS.filter(u => !u.isTeacher);
-        const optionsHtml = students.map(s => `<option value="${s.codinome}">${s.codinome}</option>`).join("");
-        document.getElementById("voteCandidate").innerHTML = optionsHtml;
-        document.getElementById("issueTarget").innerHTML = optionsHtml;
-    };
 
     async function ensureHardhatNetwork() {
         const chainId = await window.ethereum.request({ method: "eth_chainId" });
         if (chainId === HARDHAT_CHAIN_ID) return;
         try {
-            await window.ethereum.request({
-                method: "wallet_switchEthereumChain",
-                params: [{ chainId: HARDHAT_CHAIN_ID }]
-            });
+            await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: HARDHAT_CHAIN_ID }] });
         } catch (e) {
-            if (e.code === 4902 || (e.data && e.data.originalError && e.data.originalError.code === 4902)) {
-                await window.ethereum.request({
-                    method: "wallet_addEthereumChain",
-                    params: [HARDHAT_NETWORK]
-                });
-            } else {
-                throw e;
-            }
+            if (e.code === 4902) {
+                await window.ethereum.request({ method: "wallet_addEthereumChain", params: [HARDHAT_NETWORK] });
+            } else { throw e; }
         }
     }
 
     async function connectWallet() {
-        if (!window.ethereum) return alert("Instale o MetaMask!");
+        if (!window.ethereum) return alert("Instale o MetaMask! (e abra esta página via http://localhost, não file://)");
         try {
             setMsg("Conectando...");
             await ensureHardhatNetwork();
@@ -165,80 +160,124 @@
             provider = new ethers.providers.Web3Provider(window.ethereum, "any");
             const accounts = await provider.send("eth_requestAccounts", []);
             currentAccount = accounts[0];
+            contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, provider.getSigner());
 
-            signer = provider.getSigner();
-            contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
-
-            // Verifica se há contrato no endereço (ex.: node do Hardhat reiniciado)
-            const code = await provider.getCode(CONTRACT_ADDRESS);
-            if (code === "0x") {
-                setMsg("Nenhum contrato encontrado nesse endereço. Faça o deploy novamente.", "err");
+            if ((await provider.getCode(CONTRACT_ADDRESS)) === "0x") {
+                setMsg("Nenhum contrato nesse endereço. Faça o deploy novamente e atualize CONTRACT_ADDRESS.", "err");
                 return;
             }
+
+            // Endereços dos usuários vêm do contrato
+            const addrs = await Promise.all(CODINOMES.map(c => contract.users(c)));
+            USERS = CODINOMES.map((c, i) => ({ codinome: c, address: addrs[i], isTeacher: c === TEACHER }));
+
+            // Select de emissão (somente alunos, sem a professora)
+            $("issueTarget").innerHTML = students().map(s => `<option value="${s.codinome}">${s.codinome}</option>`).join("");
 
             if (!listenersAttached) {
                 listenersAttached = true;
                 window.ethereum.on("accountsChanged", () => window.location.reload());
                 window.ethereum.on("chainChanged", () => window.location.reload());
             }
+            // Ranking por eventos: qualquer Transfer (vote, issueToken, bônus) atualiza a tela
             contract.removeAllListeners("Transfer");
-            contract.on("Transfer", () => { updateUI().catch(console.error); });
+            contract.on("Transfer", () => refresh());
 
-            document.getElementById("btnConnect").innerText = "Carteira conectada";
-            await updateUI();
+            $("btnConnect").innerText = "Carteira conectada";
+            await refresh();
             setMsg("Conectado.", "ok");
         } catch (err) {
             setMsg("Erro ao conectar: " + errText(err), "err");
         }
     }
 
+    // Evita atualizações concorrentes (vários eventos seguidos)
+    async function refresh() {
+        if (refreshing) { refreshAgain = true; return; }
+        refreshing = true;
+        try {
+            do { refreshAgain = false; await updateUI(); } while (refreshAgain);
+        } catch (e) { console.error(e); }
+        refreshing = false;
+    }
+
     async function updateUI() {
-        if (!contract) return;
-
-        const user = USERS.find(u => u.address.toLowerCase() === currentAccount.toLowerCase());
+        const me = USERS.find(u => same(u.address, currentAccount));
         const owner = await contract.owner();
-        const isOwner = currentAccount.toLowerCase() === owner.toLowerCase();
-        const isAdmin = (user && user.isTeacher) || isOwner;
+        const isOwner = same(owner, currentAccount);
+        const isAdmin = !!(me && me.isTeacher) || isOwner;
 
-        document.getElementById("userDisplay").innerText = user ? user.codinome : (isOwner ? "owner" : "Desconhecido");
-        document.getElementById("roleDisplay").innerText = isAdmin ? "Superusuário" : "Comum";
-        document.getElementById("adminPanel").style.display = isAdmin ? "block" : "none";
+        const teacher = USERS.find(u => u.isTeacher);
+        $("debug").innerHTML = `Sua conta: ${currentAccount}<br>Owner do contrato: ${owner}<br>Professora (roberta): ${teacher ? teacher.address : "-"}`;
 
-        const balance = await contract.balanceOf(currentAccount);
-        document.getElementById("balanceDisplay").innerText = balance.toString();
+        $("userDisplay").innerText = me ? me.codinome : (isOwner ? "owner" : "Desconhecido");
+        $("roleDisplay").innerHTML = isAdmin ? '<span class="badge b-admin">Superusuário</span>'
+                                  : me ? '<span class="badge b-user">Usuário comum</span>'
+                                       : '<span class="badge b-none">Não registrado</span>';
 
-        const isVotingActive = await contract.voting();
-        document.getElementById("statusDisplay").innerText = isVotingActive ? "Ativa 🟢" : "Pausada 🔴";
+        // Interfaces diferentes: painel admin só para superusuários
+        $("adminPanel").classList.toggle("hidden", !isAdmin);
 
-        // Só usuários pré-autorizados podem votar (regra do contrato)
-        document.getElementById("btnVote").disabled = !(user && isVotingActive);
+        const [balance, active] = await Promise.all([contract.balanceOf(currentAccount), contract.voting()]);
+        $("balanceDisplay").innerText = balance.toString();
+        $("statusDisplay").innerText = active ? "Ativa 🟢" : "Pausada 🔴";
+
+        // Select de votação: marca quem já foi votado e o próprio usuário
+        const prev = $("voteCandidate").value;
+        const voted = me ? await Promise.all(students().map(s => contract.hasVote(me.codinome, s.codinome))) : [];
+        $("voteCandidate").innerHTML = students().map((s, i) => {
+            const isSelf = me && me.codinome === s.codinome;
+            const already = voted[i];
+            const dis = isSelf || already ? "disabled" : "";
+            const tag = isSelf ? " (você)" : already ? " (já votado)" : "";
+            return `<option value="${s.codinome}" ${dis}>${s.codinome}${tag}</option>`;
+        }).join("");
+        if (prev && !$("voteCandidate").querySelector(`option[value="${prev}"]`)?.disabled) $("voteCandidate").value = prev;
+        else { const firstOk = [...$("voteCandidate").options].find(o => !o.disabled); if (firstOk) $("voteCandidate").value = firstOk.value; }
+
+        const hasOption = [...$("voteCandidate").options].some(o => !o.disabled);
+        $("btnVote").disabled = !(me && active && hasOption);
+        $("voteNote").textContent = !me ? "Esta conta não é um usuário pré-autorizado a votar (ex.: o owner do deploy)."
+                                   : !active ? "A votação está pausada."
+                                   : !hasOption ? "Você já votou em todos os alunos." : "";
 
         await updateRanking();
+    }
+
+    async function updateRanking() {
+        const list = students();
+        const bals = await Promise.all(list.map(u => contract.balanceOf(u.address)));
+        const rows = list.map((u, i) => ({ codinome: u.codinome, balance: bals[i] }));
+        rows.sort((a, b) => b.balance.gt(a.balance) ? 1 : b.balance.lt(a.balance) ? -1 : a.codinome.localeCompare(b.codinome));
+        $("rankingTable").innerHTML = rows.map((r, i) =>
+            `<tr><td>${i + 1}</td><td>${r.codinome}</td><td><strong>${r.balance.toString()} TUR</strong></td></tr>`).join("");
     }
 
     async function sendTx(label, fn) {
         try {
             setMsg(label + " — confirme na carteira...");
             const tx = await fn();
-            setMsg("Aguardando confirmação da transação...");
+            setMsg("Aguardando confirmação...");
             await tx.wait();
             setMsg(label + ": sucesso!", "ok");
-            await updateUI();
+            await refresh();
         } catch (err) {
             setMsg("Erro: " + errText(err), "err");
         }
     }
 
     async function handleVote() {
-        const cand = document.getElementById("voteCandidate").value;
-        const amount = parseInt(document.getElementById("voteAmount").value, 10);
-        if (!(amount === 1 || amount === 2)) return setMsg("Escolha 1 ou 2 Turings.", "err");
+        const cand = $("voteCandidate").value;
+        const amount = parseInt($("voteAmount").value, 10);
+        if (!cand) return setMsg("Selecione um aluno.", "err");
+        if (amount !== 1 && amount !== 2) return setMsg("Escolha 1 ou 2 Turings.", "err");
         await sendTx("Voto", () => contract.vote(cand, amount));
     }
 
     async function handleIssue() {
-        const target = document.getElementById("issueTarget").value;
-        const amount = parseInt(document.getElementById("issueAmount").value, 10);
+        const target = $("issueTarget").value;
+        const amount = parseInt($("issueAmount").value, 10);
+        if (!target) return setMsg("Selecione um aluno.", "err");
         if (!(amount > 0)) return setMsg("Quantidade deve ser maior que zero.", "err");
         await sendTx("Emissão", () => contract.issueToken(target, amount));
     }
@@ -246,19 +285,6 @@
     async function handleSetVoting(enable) {
         await sendTx(enable ? "Ativar votação" : "Pausar votação",
             () => enable ? contract.votingOn() : contract.votingOff());
-    }
-
-    async function updateRanking() {
-        const balances = await Promise.all(USERS.map(u => contract.balanceOf(u.address)));
-        const list = USERS.map((u, i) => ({ codinome: u.codinome, balance: balances[i] }));
-        list.sort((a, b) => b.balance.gt(a.balance) ? 1 : (b.balance.lt(a.balance) ? -1 : 0));
-
-        document.getElementById("rankingTable").innerHTML = list.map(item => `
-            <tr>
-                <td>${item.codinome}</td>
-                <td><strong>${item.balance.toString()} TUR</strong></td>
-            </tr>
-        `).join("");
     }
 </script>
 </body>
